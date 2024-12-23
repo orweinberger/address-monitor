@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bitcoin Address Monitor</title>
+  <!-- A modern, dark-themed layout using simple styling -->
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    body {
+      background-color: #121212;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    h1, h2, h3, p {
+      margin-bottom: 1rem;
+      text-align: center;
+    }
+
+    .balance-container {
+      margin-bottom: 2rem;
+    }
+
+    .square {
+      width: 200px;
+      height: 200px;
+      margin-bottom: 2rem;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      text-align: center;
+      padding: 1rem;
+    }
+
+    .legend {
+      display: flex;
+      gap: 1rem;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 1rem;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .color-swatch {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Bitcoin Address Monitor</h1>
+  <div class="balance-container">
+    <h2 id="btcBalance">BTC Balance: Loading...</h2>
+    <h3 id="usdValue">USD Value: Loading...</h3>
+  </div>
+
+  <!-- This square's background color changes based on the address status -->
+  <div id="statusSquare" class="square">
+    Loading...
+  </div>
+
+  <!-- Legend explaining the meaning of each color -->
+  <div class="legend">
+    <div class="legend-item">
+      <span class="color-swatch" style="background-color: #5cb85c;"></span>
+      <span>Green = No outgoing transaction</span>
+    </div>
+    <div class="legend-item">
+      <span class="color-swatch" style="background-color: #f0ad4e;"></span>
+      <span>Orange = Outgoing transaction, not confirmed</span>
+    </div>
+    <div class="legend-item">
+      <span class="color-swatch" style="background-color: #d9534f;"></span>
+      <span>Red = Confirmed outgoing transaction</span>
+    </div>
+  </div>
+
+  <script>
+    // -------------------------------
+    //    CONFIGURATION
+    // -------------------------------
+    const BITCOIN_ADDRESS = "bc1qxt6lhagqs6xh4vfdumgnakqa0agr0gpcyxxjr0"; // <-- Your address here
+    const MEMPOOL_BASE_URL = "https://mempool.space/api";
+
+    // For BTC price, you can use a free public API (CoinGecko, etc.)
+    // Mempool.space also provides a price API: /v1/price
+    const COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd";
+
+    // Utility function to convert Satoshi -> BTC
+    function satToBtc(sats) {
+      return sats / 100000000;
+    }
+
+    async function fetchAddressData() {
+      try {
+        // 1) Fetch address details to get balance info
+        const addressStats = await fetch(`${MEMPOOL_BASE_URL}/address/${BITCOIN_ADDRESS}`)
+          .then(response => response.json());
+
+        // Calculate total balance
+        const confirmedBalance = addressStats.chain_stats.funded_txo_sum - addressStats.chain_stats.spent_txo_sum;
+        const mempoolBalance   = addressStats.mempool_stats.funded_txo_sum - addressStats.mempool_stats.spent_txo_sum;
+        const totalBalanceSats = confirmedBalance + mempoolBalance;
+        const totalBalanceBtc  = satToBtc(totalBalanceSats);
+
+        // Display BTC balance
+        const btcBalanceElement = document.getElementById("btcBalance");
+        btcBalanceElement.textContent = `BTC Balance: ${totalBalanceBtc.toFixed(8)} BTC`;
+
+        // 2) Fetch USD price of BTC
+        const priceData   = await fetch(COINGECKO_PRICE_URL).then(response => response.json());
+        const btcUsdPrice = priceData.bitcoin?.usd ?? 0;
+        // Calculate the USD value of the balance
+        const usdValue = (totalBalanceBtc * btcUsdPrice).toFixed(2);
+
+        // Display USD value
+        const usdValueElement = document.getElementById("usdValue");
+        usdValueElement.textContent = `USD Value: $${usdValue}`;
+
+        // 3) Check for outgoing transactions
+        // Get the transaction list for this address
+        const txList = await fetch(`${MEMPOOL_BASE_URL}/address/${BITCOIN_ADDRESS}/txs`)
+          .then(response => response.json());
+
+        let hasOutgoingTxConfirmed   = false;
+        let hasOutgoingTxUnconfirmed = false;
+
+        for (const tx of txList) {
+          // Check if any input of the transaction is from our address
+          const isOutgoing = tx.vin.some(input => input.prevout.scriptpubkey_address === BITCOIN_ADDRESS);
+
+          if (isOutgoing) {
+            // Check if transaction is confirmed
+            if (tx.status.confirmed) {
+              hasOutgoingTxConfirmed = true;
+            } else {
+              hasOutgoingTxUnconfirmed = true;
+            }
+          }
+        }
+
+        // Determine color of the square
+        let color = "#5cb85c"; // green by default
+        let text  = "Quest is ON!";
+
+        if (hasOutgoingTxConfirmed) {
+          color = "#d9534f"; // red
+          text  = "Quest completed"; // changed from "Confirmed" to "Quest completed"
+        } else if (hasOutgoingTxUnconfirmed) {
+          color = "#f0ad4e"; // orange
+          text  = "Transaction Identified";
+        }
+
+        const statusSquare = document.getElementById("statusSquare");
+        statusSquare.style.backgroundColor = color;
+        statusSquare.textContent = text;
+
+      } catch (error) {
+        console.error("Error fetching data:", error);
+        document.getElementById("btcBalance").textContent = "Error loading balance";
+        document.getElementById("usdValue").textContent = "Error loading USD value";
+        const statusSquare = document.getElementById("statusSquare");
+        statusSquare.textContent = "Error";
+        statusSquare.style.backgroundColor = "#666";
+      }
+    }
+
+    // On page load, fetch the data once
+    fetchAddressData();
+    // Then poll every 10 seconds (10,000 ms)
+    setInterval(fetchAddressData, 30000);
+  </script>
+</body>
+</html>
